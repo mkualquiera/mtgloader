@@ -1,0 +1,235 @@
+mtgback = "http://cloud-3.steamusercontent.com/ugc/1662355594061186486/19DA641099199091F9AFF7103EBE7D07943D7B47/"
+
+function mysplit (inputstr, sep)
+  if sep == nil then
+    sep = "%s"
+  end
+  local t={}
+  for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+    table.insert(t, str)
+  end
+  return t
+end
+
+
+function getNotebookText()
+  notebooks = Notes.getNotebookTabs()
+  return mysplit(notebooks[#notebooks].body, "\n")
+end
+
+function askScryfall(cardName, callback, url)
+  if url then
+    function preProcess(req)
+      response = JSON.decode(req.text)
+      return callback(response)
+    end
+    WebRequest.get(cardName, preProcess)
+  else
+    function preProcess(req)
+      response = JSON.decode(req.text)
+      log(response)
+      if #response.data > 1 then
+        for i,v in ipairs(response.data) do
+          if v.name == cardName then
+              return callback(v)
+          end
+        end
+      else
+        return callback(response.data[1])
+      end
+      print(cardName .. " not found!")
+    end
+    WebRequest.get("https://api.scryfall.com/cards/search?q=".. cardName ..
+      "&unique=cards", preProcess)
+  end
+end
+
+cards = {}
+cardnames = {}
+currentcard = 0
+
+function buildDeck()
+  print("Building deck!")
+  if #cardnames == 1 and cards[cardnames[1]].count == 1 then
+    card = spawnObject({
+      type="Card",
+      position={x=loadpos.x,y=5,z=loadpos.z},
+      rotation={x=0,y=180,z=180}
+    })
+    card.setCustomObject({
+      face=cards[cardnames[1]].front,
+      back=cards[cardnames[1]].back,
+      width=1,
+      height=1
+    })
+    card.setName(cards[cardnames[1]].name)
+    card.setDescription(cards[cardnames[1]].description)
+  else
+    deck = {}
+    deck["Name"] = "DeckCustom"
+    deck["DeckIDs"] = {}
+    deck["CustomDeck"] = {}
+    deck["ContainedObjects"] = {}
+    deck["Transform"] = {posX=loadpos.x,posY=5,posZ=loadpos.z,
+                        rotX=0,rotY=180,rotZ=180,
+                        scaleX=1,scaleY=1,scaleZ=1}
+    for i,cardname in ipairs(cardnames) do
+      -- Insert the images into the CustomDeck
+      front = cards[cardname].front
+      back = cards[cardname].back
+      deck["CustomDeck"]["REMOVEMEPLZIDON'TBELONGHERE"..i] = {FaceURL=front,
+        BackURL=back, NumHeight=1, NumWidth=1, BackIsHidden=true}
+
+      for j=1,cards[cardname].count,1 do
+        -- Insert into DeckIDs
+        table.insert(deck["DeckIDs"], i * 100)
+
+        -- Insert into ContainedObjects
+        table.insert(deck["ContainedObjects"], {
+          CardId=i*100,
+          Name="Card",
+          Nickname=cards[cardname].name,
+          Description=cards[cardname].description,
+          Transform={
+            posX=0, posY=0, posZ=0, rotX=0, rotY=180, rotZ=180, scaleX=1,
+            scaleY=1, scaleZ=1
+          }
+        })
+      end
+    end
+    deckJSON = JSON.encode(deck)
+    deckJSON = deckJSON:gsub("REMOVEMEPLZIDON'TBELONGHERE","")
+    log(deckJSON)
+    spawnObjectJSON({json=deckJSON})
+  end
+  if sideboardspawned == 1 then return end
+  cards = sbcards
+  cardnames = sbcardnames
+  currentcard = 0
+  sideboardspawned = 1
+  loadpos.x = loadpos.x + 3
+  loadcard()
+end
+
+foilProbabilities = {
+  common=1/50,
+  uncommon=1/25,
+  rare=1/10,
+  mythic=1/1
+}
+
+function getFoil(url)
+  lastpart, crap = string.match(url, "https://c1.scryfall.com/file/(.+)?(.+)")
+  formated = lastpart:gsub("/","PATHSEPARATOR") .. ".unity3d"
+  fullurl = "huestudios.mooo.com:81/files/" .. formated
+  return fullurl
+end
+
+function loadcard()
+  currentcard = currentcard + 1
+  if currentcard > #cardnames then return buildDeck() end
+  function scryfallCallback(obj)
+    print("Loading " .. cardnames[currentcard])
+    cards[cardnames[currentcard]]["name"] = obj.name .. " [" ..
+                      obj.type_line:gsub("—","-") .. "]"
+    cards[cardnames[currentcard]]["back"] = mtgback
+    cards[cardnames[currentcard]]["description"] = obj.oracle_text
+
+    isfoil = false
+    if obj.nonfoil == false then
+      isfoil = true
+    else
+      if obj.foil == true then
+        probability = foilProbabilities[obj.rarity] * cards[cardnames[currentcard]]["count"]
+        if math.random() <= probability then
+          isfoil = true
+        end
+      end
+    end
+
+    if obj["image_uris"] == nil then
+      if isfoil then
+        cards[cardnames[currentcard]]["front"]
+          = getFoil(obj.card_faces[1].image_uris["normal"])
+        cards[cardnames[currentcard]]["back"]
+          = getFoil(obj.card_faces[2].image_uris["normal"])
+      else
+        cards[cardnames[currentcard]]["front"]
+          = obj.card_faces[1].image_uris["normal"]
+        cards[cardnames[currentcard]]["back"]
+          = obj.card_faces[2].image_uris["normal"]
+      end
+      cards[cardnames[currentcard]]["description"] = "Two sided card"
+    else
+      if isfoil then
+        cards[cardnames[currentcard]]["front"]
+          = getFoil(obj.image_uris["normal"])
+      else
+        cards[cardnames[currentcard]]["front"]
+          = obj.image_uris["normal"]
+      end
+    end
+    if obj.all_parts ~= nil then
+      for i,other in ipairs(obj.all_parts) do
+        if (other.component == "token" or
+            string.match(other.type_line, "Emblem"))
+            and other.name ~= obj.name then
+          if sbcards[other.uri] == nil then
+            table.insert(sbcardnames,other.uri)
+            sbcards[other.uri] = {uri = other.uri, count=1}
+          end
+        end
+      end
+    end
+
+    Wait.time(loadcard, 0.1, 1)
+  end
+  cardname = cardnames[currentcard]
+  if cards[cardname].uri ~= nil then
+    askScryfall(cards[cardname].uri,scryfallCallback,true)
+  else
+    askScryfall(cardname,scryfallCallback,false)
+  end
+end
+
+function loadDeck(lines)
+  cards = {}
+  cardnames = {}
+  sbcards = {}
+  sbcardnames = {}
+  adding = cards
+  addingNames = cardnames
+  currentcard = 0
+  sideboardspawned = 0
+  for i,line in ipairs(lines) do
+    if line == "Sideboard" then
+      adding = sbcards
+      addingNames = sbcardnames
+    else
+      count, cardname = string.match(line, "(%d+) (.+)")
+      if adding[cardname] == nil then
+        adding[cardname] = {count=0}
+        table.insert(addingNames, cardname)
+      end
+      adding[cardname].count = adding[cardname].count + count
+    end
+  end
+  loadcard()
+end
+
+loadpos = {}
+
+function onChat(message, player)
+  if message == "deck" then
+    loadpos = player.getPointerPosition()
+    lines = getNotebookText()
+    loadDeck(lines)
+  end
+end
+
+function onLoad(save_state)
+  notebooks = Notes.getNotebookTabs()
+  for i,v in ipairs(notebooks) do
+    Notes.removeNotebookTab(1)
+  end
+end
