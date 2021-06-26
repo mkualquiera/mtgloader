@@ -14,14 +14,15 @@ Scryfall.getCardDataBySomething = function(text, callback)
 end
 
 Scryfall.getCardDataById = function(id, callback)
+    print("Loading by id "..id)
     Scryfall.getCardDataByURI("https://api.scryfall.com/cards/"..id,
                                 callback)
 end
 
 Scryfall.getCardDataByURI = function(uri, callback)
-    WebRequest.get(url, function(req)
-      local cardData = JSON.decode(req.text)
-      return callback(cardData)
+    WebRequest.get(uri, function(req)
+        local cardData = JSON.decode(req.text)
+        return callback(cardData)
     end)
 end
 
@@ -146,44 +147,75 @@ MTGLoader.createDeckDescriptorInternal = function(progress,namesAndCounts,
             newCard.description = cardData.oracle_text
         end
         table.insert(progress.deck.cards,newCard)
+
+        if genSideboard then
+            if cardData.all_parts ~= nil then
+                for i,part in ipairs(cardData.all_parts) do
+                    if (part.component == "token" or
+                        string.match(part.type_line, "Emblem"))
+                        and part.id ~= newCard.id then
+                        local contained = false
+                        for i,sideboardCard in ipairs(progress.sideboard) do
+                            if sideboardCard.id == part.id then
+                                contained = true
+                                break
+                            end
+                        end
+                        if not contained then
+                            table.insert(progress.sideboard,{name=part.id,
+                                id=part.id,count=1})
+                        end
+                    end
+                end
+            end
+        end
+
         MTGLoader.createDeckDescriptorInternal(progress,namesAndCounts,
             genSideboard,callback)
     end)
 end
 
 function mysplit (inputstr, sep)
-  if sep == nil then
-    sep = "%s"
-  end
-  local t={}
-  for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
-    table.insert(t, str)
-  end
-  return t
+    if sep == nil then
+        sep = "%s"
+    end
+    local t={}
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+        table.insert(t, str)
+    end
+    return t
 end
 
 
 function getNotebookText()
-  notebooks = Notes.getNotebookTabs()
-  return mysplit(notebooks[#notebooks].body, "\n")
+    notebooks = Notes.getNotebookTabs()
+    return mysplit(notebooks[#notebooks].body, "\n")
 end
 
 function onChat(message, player)
-  if message == "deck" then
-    local loadPos = player.getPointerPosition()
-    loadPos.y = 5
-    local lines = getNotebookText()
-    local namesAndCounts = {}
-    for i,line in ipairs(lines) do
-        local count, cardName = string.match(line, "(%d+) (.+)")
-        if count and cardName then
-            local nameAndCount = {name=cardName, count=count}
-            table.insert(namesAndCounts, nameAndCount)
+    if message == "deck" then
+        local loadPos = player.getPointerPosition()
+        loadPos.y = 5
+        local lines = getNotebookText()
+        local namesAndCounts = {}
+        for i,line in ipairs(lines) do
+            local count, cardName = string.match(line, "(%d+) (.+)")
+            if count and cardName then
+                local nameAndCount = {name=cardName, count=count}
+                table.insert(namesAndCounts, nameAndCount)
+            end
         end
+        MTGLoader.createDeckDescriptor(namesAndCounts,true,
+        function(descriptors)
+            local deck = descriptors.deck
+            MTGLoader.spawnDeckObject(deck,loadPos)
+            local sideboard = descriptors.sideboard
+            MTGLoader.createDeckDescriptor(sideboard,false,
+            function(descriptors)
+                local deck = descriptors.deck
+                MTGLoader.spawnDeckObject(deck,{x=loadPos.x+5,y=loadPos.y,
+                    z=loadPos.z})
+            end)
+        end)
     end
-    MTGLoader.createDeckDescriptor(namesAndCounts,true,function(descriptors)
-        local deck = descriptors.deck
-        MTGLoader.spawnDeckObject(deck,loadPos)
-    end)
-  end
 end
