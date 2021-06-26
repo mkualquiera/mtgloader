@@ -54,8 +54,7 @@ MTGLoader.spawnDeckObject = function(deckDescriptor,position)
     end
     -- When we only have a single card, we just spawn it as a Card object.
     if #(deckDescriptor.cards) == 1 then
-        if deckDescriptor.cards[1].count == 1 then
-            printToAll("Building simple card...")
+        if ((deckDescriptor.cards[1].count + 1) - 1) == 1 then
             local card = spawnObject({
                 type="Card",
                 position=position,
